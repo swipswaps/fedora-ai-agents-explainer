@@ -4011,7 +4011,7 @@ else
             gh repo create "$PROJECT_SLUG" --public --source="$PROJECT_DIR" --remote=origin || return 1
         fi
     fi
-    gh repo edit "$PROJECT_SLUG" --visibility public || return 1
+    gh repo edit --accept-visibility-change-consequences "$PROJECT_SLUG" --visibility public || return 1
     # Stage the complete, explicitly enumerated project. The two root-level
     # launch/install helpers were missing from the first publisher's allowlist;
     # they are now included as well as their public download copies.
