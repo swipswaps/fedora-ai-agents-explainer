@@ -1,0 +1,221 @@
+CONVERSATION AND SOURCE AUDIT
+=============================
+
+PURPOSE
+-------
+This audit records the architectural corrections required before building the
+Fedora-native Omarchy-inspired AI agents explainer.
+
+CORRECTIONS TO THE EARLIER CHAT
+-------------------------------
+1. OpenCode is a first-class Omarchy agent. The current Omarchy manual lists
+   its launcher, and the current Agents collector README documents OpenCode Go
+   limits plus local usage from both the legacy message and V2 session_message
+   stores. It also documents message-ID deduplication and exclusion of inherited
+   fork history. The earlier answer's claim that OpenCode collection was not
+   supported was inaccurate/outdated; the current manual and collector contract
+   are the authoritative references.
+
+2. The current official OpenCode CLI documentation explicitly documents
+   `opencode stats --json`, `opencode auth list --format json`, and
+   `opencode debug paths db`. The native CLI aggregate is an independent
+   cross-check; this project's collector reads message/session tables directly
+   because it needs per-message timestamps and a V2 cumulative-counter fallback.
+   The V2 schema stores per-message model/cost/token/time metadata in assistant
+   session_message.data and cumulative counters in session_v2. This project
+   projects only metadata paths for per-message events and uses session
+   aggregates only when message-level usage is absent. Fallback snapshots are
+   converted into idempotent observation-time deltas.
+
+3. Launching an agent, collecting local token usage, and querying provider
+   subscription quotas are distinct capabilities. An installed executable
+   does not prove authentication, provider quota access, or account identity.
+   This implementation reports those states separately and does not infer a
+   provider's subscription balance from local token counts.
+
+4. GitHub Pages is static hosting. It cannot run Docker Compose, FastAPI, or a
+   persistent SQLite database. The public site is the explainer/installer page;
+   the local Vite UI proxies to a FastAPI service bound to host loopback.
+
+5. A browser page served from HTTPS GitHub Pages cannot safely assume it may
+   probe a local HTTP backend. Static mode does not make that mixed-content
+   request. Full capability discovery occurs on the localhost instance.
+
+6. SQLite WAL improves same-host reader/writer concurrency. It is not a
+   multi-host network database. The active application database is a local
+   Docker named volume and is never shared across hosts over NFS/SMB.
+
+7. Copying only the main SQLite database file while WAL is active is not a
+   reliable backup. The backup utility uses SQLite's online backup API and
+   verifies the resulting database with PRAGMA integrity_check.
+
+8. OpenCode stores provider credentials in its own SQLite database. The local
+   collector must never select authentication tables, credential tokens, API keys,
+   or OAuth credentials. It runs as the logged-in user, opens the source database
+   read-only, and sends only normalized usage metadata over loopback. Docker never
+   mounts the source database.
+
+PUBLISHER AND INSTALLER DEFECTS FOUND AND CORRECTED IN THIS REVISION
+---------------------------------------------------------------------
+1. The first publisher enabled GitHub Pages AFTER pushing the workflow commit.
+   That ordering could let the push-triggered deploy race Pages site creation.
+   The revised builder configures Pages first, then pushes.
+2. The first publisher polled `gh run list`, not the GitHub REST API, and did not
+   tie the observed run to the exact commit/workflow path. The revised publisher
+   polls `GET /repos/{owner}/{repo}/actions/runs?head_sha=...` through `gh api`,
+   selects deploy.yml for the exact commit, and requires conclusion=success.
+3. The first publisher accepted one HTTP 200 from the Pages URL and opened it
+   without validating the returned site identity or built assets. The revised
+   publisher checks the Pages REST representation, retries HTTP propagation,
+   validates the expected HTML identity, fetches each Vite JS/CSS asset, then
+   invokes xdg-open and checks its exit status.
+4. The first Git staging allowlist omitted the root agent-launcher.sh and
+   install-opencode.sh files. Both root files are now explicitly staged.
+5. The first systemd dashboard unit depended on the interactive shell's Node
+   PATH. systemd does not source shell startup files; the revised unit records
+   absolute npm/Node locations and extends PATH for child scripts.
+6. The first local installer checked the API but could open Vite before the
+   frontend had answered. The revised installer waits for HTTP 200 and the app
+   identity before calling xdg-open.
+7. A non-empty remote main branch can be unrelated to a fresh local git init.
+   The revised publisher only allows provable fast-forward history and refuses
+   unrelated/divergent histories rather than force-pushing over existing work.
+8. Updating an existing GitHub Pages site can return HTTP 204 with no JSON body.
+   The revised publisher always performs a separate Pages GET after create/update
+   and parses only that read-back representation.
+
+USER-PROJECT PATTERNS REVIEWED
+------------------------------
+- pulumi-homelab-explainer README and setup-pulumi-explainer.sh: dual-plane
+  static GitHub Pages plus local Docker/FastAPI/SQLite WAL/sqlite-vec/FTS5,
+  one-shot heredoc generation, GitHub CLI publication and xdg-open.
+- receipts-ocr README: backend health/readiness detection, CI/test gates and
+  explicit fallback/status behavior. OCR engines and OCR data models are not
+  reused.
+- receipts-ocr-rag, receipts-ocr-rag-v2 and proxmox-orchestrator were supplied
+  as additional architectural references; no OCR or Proxmox-specific code is
+  copied into this agent dashboard.
+
+CURRENT OMARCHY ARCHITECTURE USED AS REFERENCE
+----------------------------------------------
+- The panel is a display layer over independent usage collectors.
+- Collectors emit a stable JSON record contract.
+- Adding a collector does not require QML changes.
+- OpenCode V1 and V2 assistant rows are projected to per-message usage metadata.
+  V2 session_v2 (or newer session) cumulative counters are a fallback for
+  sessions without per-message usage and are converted to deltas by the backend.
+- Legacy V1 copied pre-fork history is filtered using session creation times.
+- Session aggregate metadata and provider quota data are distinct from the UI;
+  this Fedora implementation does not claim all Omarchy quota collectors.
+
+FEDORA IMPLEMENTATION SCOPE
+---------------------------
+This repository implements:
+- A standalone OpenCode collector module that emits a versioned JSON record contract.
+- React/Vite static explainer with Three.js architecture topology and D3 usage chart.
+- A Fedora Xfce-compatible desktop dashboard entry, fixed-allowlist agent menu,
+  and systemd user timer for host-side snapshots.
+- FastAPI local API and SQLite schema migrations.
+- SQLite 3.54.1 built from the official upstream source archive with SHA-256
+  verification, WAL, foreign keys, busy timeout, FTS5, sqlite-vec, and online backup.
+- OpenCode legacy/V2 usage metadata projection through a host-side read-only collector; the source DB is never mounted into Docker.
+- Optional local Ollama embeddings; no semantic vectors are fabricated when the
+  embedding model is unavailable.
+- Agent executable detection for OpenCode, Claude Code, Codex, Gemini CLI, Pi,
+  and GitHub Copilot CLI. Detection is not a claim of usage-collector support.
+
+NOT IMPLEMENTED OR NOT CLAIMED
+------------------------------
+- Provider-specific subscription quota APIs and account switching for every
+  Omarchy collector.
+- Full OpenCode Go, Z.ai, Ollama Cloud, MiniMax, OpenRouter, DeepSeek, Synthetic,
+  or other provider quota/balance endpoints.
+- Usage collectors for Claude, Codex, Gemini, Pi, or Copilot; those are detected
+  for launch only in this first implementation.
+- Multi-device aggregation and account-level deduplication across machines.
+- A production authentication layer for a remotely exposed API. The API is
+  deliberately loopback-only.
+
+VALIDATION BOUNDARIES
+---------------------
+The one-shot builder runs shell syntax, Python compilation, npm production build,
+Python tests, and Docker Compose validation when the relevant dependencies and
+network are available. A source-only run with SKIP_DEPENDENCY_INSTALL=1 is not a
+full build and must not be represented as one. The actual Fedora host must run
+the builder with dependencies enabled before GitHub publication.
+
+SOURCES
+-------
+User project pattern references (architecture only; no OCR code copied):
+https://github.com/swipswaps/pulumi-homelab-explainer
+https://github.com/swipswaps/pulumi-homelab-explainer/blob/main/setup-pulumi-explainer.sh
+https://github.com/swipswaps/receipts-ocr
+https://github.com/swipswaps/receipts-ocr-rag
+https://github.com/swipswaps/receipts-ocr-rag-v2
+https://github.com/swipswaps/proxmox-orchestrator
+
+Omarchy current Agents README:
+https://github.com/omacom/omarchy/blob/quattro/shell/plugins/agents/README.md
+
+Omarchy collector contract:
+https://github.com/omacom/omarchy/blob/quattro/docs/agent-usage-collectors.md
+
+Omarchy shared OpenCode reader:
+https://github.com/omacom/omarchy/blob/quattro/shell/plugins/agents/collectors.py
+
+OpenCode official CLI and installation documentation:
+https://opencode.ai/docs/
+
+OpenCode CLI commands (stats --json and debug paths db):
+https://opencode.ai/docs/cli/commands
+
+OpenCode official provider authentication/database documentation:
+https://opencode.ai/docs/cli/providers
+
+SQLite 3.54.1 release:
+https://sqlite.org/releaselog/3_54_1.html
+
+Buildroot's reviewed upstream source archive SHA-256 update:
+https://lists.busybox.net/pipermail/buildroot/2026-October/813774.html
+
+SQLite WAL:
+https://www.sqlite.org/wal.html
+
+SQLite online backup API:
+https://www.sqlite.org/backup.html
+
+Python sqlite3 API:
+https://docs.python.org/3/library/sqlite3.html
+
+SQLite FTS5:
+https://www.sqlite.org/fts5.html
+
+sqlite-vec:
+https://github.com/asg017/sqlite-vec
+
+sqlite-vec Python binding:
+https://alexgarcia.xyz/sqlite-vec/python.html
+
+GitHub Pages workflow publishing and permissions:
+https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages
+
+GitHub Pages publishing source API:
+https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site
+
+GitHub Actions workflow runs REST API:
+https://docs.github.com/en/rest/actions/workflow-runs
+
+GitHub Pages REST API:
+https://docs.github.com/en/rest/pages
+
+GitHub CLI authenticated API requests:
+https://cli.github.com/manual/gh_api
+
+Vite static deployment and project base paths:
+https://vite.dev/guide/static-deploy
+
+systemd execution environment and PATH:
+https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html
+
+xdg-utils project (xdg-open):
+https://gitlab.freedesktop.org/xdg/xdg-utils

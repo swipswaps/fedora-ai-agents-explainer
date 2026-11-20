@@ -1,0 +1,44 @@
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fedora-ai-agents-api
+    restart: unless-stopped
+    environment:
+      DATABASE_PATH: /data/agents.db
+      VECTOR_DIMENSIONS: ${VECTOR_DIMENSIONS:-768}
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
+      CORS_ORIGINS: http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:4173
+    ports:
+      # Bind explicitly to loopback. Do not change to 0.0.0.0 for a desktop-local service.
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - agent-data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    networks:
+      - agent-net
+
+volumes:
+  agent-data:
+    name: fedora-ai-agents-data
+
+networks:
+  agent-net:
+    name: fedora-ai-agents-net
+    driver: bridge
